@@ -11,17 +11,10 @@ class NicknameTakenException implements Exception {
   String toString() => 'Nickname taken';
 }
 
-/// Firestore paths: `users/{uid}`, `nicknames/{lowercaseNick}`, `chats/{chatId}`,
-/// `chats/{chatId}/messages/{id}`.
-///
-/// Configure rules so clients can read `nicknames` for availability checks if
-/// needed, and create/update only when `request.resource.data.uid == request.auth.uid`.
 class ChatRepository {
-  ChatRepository({
-    FirebaseFirestore? firestore,
-    FirebaseAuth? auth,
-  })  : _db = firestore ?? FirebaseFirestore.instance,
-        _auth = auth ?? FirebaseAuth.instance;
+  ChatRepository({FirebaseFirestore? firestore, FirebaseAuth? auth})
+    : _db = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _db;
   final FirebaseAuth _auth;
@@ -33,19 +26,14 @@ class ChatRepository {
     return '${sorted[0]}_${sorted[1]}';
   }
 
-  /// Normalized document id for [nicknames] (lowercase trimmed).
-  static String nicknameDocKey(String nickname) => nickname.trim().toLowerCase();
+  static String nicknameDocKey(String nickname) =>
+      nickname.trim().toLowerCase();
 
-  /// Public nickname: 3–20 chars, letters, digits, underscore only.
   static bool isValidNicknameFormat(String raw) {
     final t = raw.trim();
     return RegExp(r'^[a-zA-Z0-9_]{3,20}$').hasMatch(t);
   }
 
-  /// Reserves `nicknames/{nicknameDocKey(nickname)}` for [uid].
-  ///
-  /// Call right after [createUserWithEmailAndPassword] while still signed in.
-  /// Throws [NicknameTakenException] if the key belongs to another user.
   Future<void> claimNickname({
     required String uid,
     required String nickname,
@@ -72,7 +60,6 @@ class ChatRepository {
     if (taken) throw NicknameTakenException();
   }
 
-  /// Removes a nickname claim if it still points at [uid] (rollback helper).
   Future<void> releaseNicknameIfOwnedBy(String nicknameKey, String uid) async {
     final ref = _db.collection('nicknames').doc(nicknameKey);
     final snap = await ref.get();
@@ -98,17 +85,13 @@ class ChatRepository {
       'email': email,
       'updatedAt': FieldValue.serverTimestamp(),
     };
-    if (photoUrl != null) {
-      data['photoUrl'] = photoUrl;
-    }
+    if (photoUrl != null) data['photoUrl'] = photoUrl;
     if (displayName != null && displayName.trim().isNotEmpty) {
       data['displayName'] = displayName.trim();
     }
     return _db.collection('users').doc(uid).set(data, SetOptions(merge: true));
   }
 
-  /// Resolves profile photo and merges into `users/{uid}`. Does nothing until 
-  /// [User.emailVerified] is true so unverified accounts are not written to Firestore.
   Future<void> syncCurrentUserProfileDocument() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -120,9 +103,7 @@ class ChatRepository {
         await user.getIdToken();
         await updateProfilePhoto(pending);
         EmailRegistrationSession.clearPendingProfilePhoto();
-      } catch (_) {
-        // Leave pending so a later sync or another **Verified** tap can retry.
-      }
+      } catch (_) {}
     }
 
     final doc = await _db.collection('users').doc(user.uid).get();
@@ -137,7 +118,6 @@ class ChatRepository {
     );
   }
 
-  /// Updates the profile photo for the current user in Firestore as a base64 string.
   Future<String> updateProfilePhoto(Uint8List bytes) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception('Not logged in');
@@ -155,7 +135,7 @@ class ChatRepository {
       photoUrl: photoUrl,
       displayName: user.displayName,
     );
-    
+
     return photoUrl;
   }
 
@@ -163,13 +143,10 @@ class ChatRepository {
     required String chatId,
     required List<String> participants,
   }) {
-    return _db.collection('chats').doc(chatId).set(
-      {
-        'participants': participants,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
+    return _db.collection('chats').doc(chatId).set({
+      'participants': participants,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> usersExceptSelf() {
@@ -223,14 +200,10 @@ class ChatRepository {
     if (messageType == 'audio') lastMsg = '🎤 Voice message';
     if (messageType == 'file') lastMsg = '📎 File';
 
-    batch.set(
-      chatRef,
-      {
-        'lastMessage': lastMsg,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
+    batch.set(chatRef, {
+      'lastMessage': lastMsg,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
     await batch.commit();
   }
 
@@ -263,15 +236,17 @@ class ChatRepository {
 
     await messageRef.delete();
 
-    final latest = await chatRef
-        .collection('messages')
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
+    final latest =
+        await chatRef
+            .collection('messages')
+            .orderBy('createdAt', descending: true)
+            .limit(1)
+            .get();
 
-    final lastMessage = latest.docs.isEmpty
-        ? ''
-        : _messagePreviewFromData(latest.docs.first.data());
+    final lastMessage =
+        latest.docs.isEmpty
+            ? ''
+            : _messagePreviewFromData(latest.docs.first.data());
 
     await chatRef.set({
       'lastMessage': lastMessage,
@@ -279,13 +254,14 @@ class ChatRepository {
     }, SetOptions(merge: true));
   }
 
-  Future<String> createGroupChat(String groupName, List<String> participantIds) async {
+  Future<String> createGroupChat(
+    String groupName,
+    List<String> participantIds,
+  ) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception('Not logged in');
 
     final chatRef = _db.collection('chats').doc();
-    
-    // Ensure current user is in participants
     if (!participantIds.contains(user.uid)) {
       participantIds.add(user.uid);
     }
@@ -304,43 +280,53 @@ class ChatRepository {
 
   Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> groupChatsStream() {
     final uid = _auth.currentUser?.uid;
-    if (uid == null) {
-      return Stream.value([]);
-    }
-    // Query by participants and sort in memory to avoid composite index requirements
+    if (uid == null) return Stream.value([]);
     return _db
         .collection('chats')
         .where('participants', arrayContains: uid)
         .snapshots()
         .map((snapshot) {
-      final docs = snapshot.docs.where((doc) => doc.data()['isGroup'] == true).toList();
-      docs.sort((a, b) {
-        final timeA = (a.data()['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final timeB = (b.data()['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return timeB.compareTo(timeA); // Descending
-      });
-      return docs;
-    });
+          final docs =
+              snapshot.docs
+                  .where((doc) => doc.data()['isGroup'] == true)
+                  .toList();
+          docs.sort((a, b) {
+            final timeA =
+                (a.data()['updatedAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final timeB =
+                (b.data()['updatedAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return timeB.compareTo(timeA);
+          });
+          return docs;
+        });
   }
 
-  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> directChatsStream() {
+  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  directChatsStream() {
     final uid = _auth.currentUser?.uid;
-    if (uid == null) {
-      return Stream.value([]);
-    }
+    if (uid == null) return Stream.value([]);
     return _db
         .collection('chats')
         .where('participants', arrayContains: uid)
         .snapshots()
         .map((snapshot) {
-      final docs = snapshot.docs.where((doc) => doc.data()['isGroup'] != true).toList();
-      docs.sort((a, b) {
-        final timeA = (a.data()['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final timeB = (b.data()['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return timeB.compareTo(timeA); // Descending
-      });
-      return docs;
-    });
+          final docs =
+              snapshot.docs
+                  .where((doc) => doc.data()['isGroup'] != true)
+                  .toList();
+          docs.sort((a, b) {
+            final timeA =
+                (a.data()['updatedAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final timeB =
+                (b.data()['updatedAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return timeB.compareTo(timeA);
+          });
+          return docs;
+        });
   }
 
   Stream<DocumentSnapshot<Map<String, dynamic>>?> currentUserStream() {
@@ -363,5 +349,20 @@ class ChatRepository {
     await _db.collection('users').doc(uid).set({
       'blockedUsers': FieldValue.arrayRemove([blockedUid]),
     }, SetOptions(merge: true));
+  }
+
+  /// Fetches multiple user documents in parallel by their UIDs.
+  /// Returns a map of uid -> user data. Missing users are excluded.
+  Future<Map<String, Map<String, dynamic>>> fetchUsersByIds(
+    List<String> uids,
+  ) async {
+    if (uids.isEmpty) return {};
+    final snaps = await Future.wait(
+      uids.map((id) => _db.collection('users').doc(id).get()),
+    );
+    return {
+      for (final s in snaps)
+        if (s.exists) s.id: s.data()!,
+    };
   }
 }
