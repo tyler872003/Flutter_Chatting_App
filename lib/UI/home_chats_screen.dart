@@ -220,10 +220,11 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                       return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                         stream: repo.usersExceptSelf(),
                         builder: (context, userSnapshot) {
-                          if (!userSnapshot.hasData)
+                          if (!userSnapshot.hasData) {
                             return const Center(
                               child: CircularProgressIndicator(),
                             );
+                          }
 
                           final docs =
                               userSnapshot.data!.docs.where((d) {
@@ -372,14 +373,16 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                         >(
                           stream: repo.directChatsStream(),
                           builder: (context, directSnapshot) {
-                            if (groupSnapshot.hasError)
+                            if (groupSnapshot.hasError) {
                               return Center(
                                 child: Text('Error: ${groupSnapshot.error}'),
                               );
-                            if (directSnapshot.hasError)
+                            }
+                            if (directSnapshot.hasError) {
                               return Center(
                                 child: Text('Error: ${directSnapshot.error}'),
                               );
+                            }
 
                             final groups = groupSnapshot.data ?? [];
                             final directChats = directSnapshot.data ?? [];
@@ -489,8 +492,9 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                               .get(),
                                       builder: (context, userSnap) {
                                         if (!userSnap.hasData ||
-                                            !userSnap.data!.exists)
+                                            !userSnap.data!.exists) {
                                           return const SizedBox.shrink();
+                                        }
 
                                         final userData = userSnap.data!.data()!;
                                         final displayName =
