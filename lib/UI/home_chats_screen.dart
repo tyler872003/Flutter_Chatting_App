@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -25,6 +26,10 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
 
+  // FIX: Single shared stories stream — prevents double Firestore reads
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _storiesStream =
+      StoryRepository().activeStoriesStream().asBroadcastStream();
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -37,6 +42,8 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
     _currentPhotoUrl = FirebaseAuth.instance.currentUser?.photoURL;
     _fetchCurrentPhotoUrl();
     ChatRepository().syncCurrentUserProfileDocument();
+    // FIX: Clean up expired stories on start
+    StoryRepository().deleteExpiredStories();
   }
 
   Future<void> _fetchCurrentPhotoUrl() async {
@@ -47,9 +54,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
     if (mounted && doc.exists) {
       final photoUrl = doc.data()?['photoUrl'] as String?;
       if (photoUrl != null && photoUrl.isNotEmpty) {
-        setState(() {
-          _currentPhotoUrl = photoUrl;
-        });
+        setState(() => _currentPhotoUrl = photoUrl);
       }
     }
   }
@@ -74,17 +79,10 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
       return;
     }
 
-    setState(() {
-      _isUploadingProfilePhoto = true;
-    });
-
+    setState(() => _isUploadingProfilePhoto = true);
     try {
       final newUrl = await ChatRepository().updateProfilePhoto(bytes);
-      if (mounted) {
-        setState(() {
-          _currentPhotoUrl = newUrl;
-        });
-      }
+      if (mounted) setState(() => _currentPhotoUrl = newUrl);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -92,11 +90,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
         ).showSnackBar(SnackBar(content: Text('Failed to update photo: $e')));
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isUploadingProfilePhoto = false;
-        });
-      }
+      if (mounted) setState(() => _isUploadingProfilePhoto = false);
     }
   }
 
@@ -179,9 +173,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
               child: TextField(
                 controller: _searchController,
                 onChanged: (value) {
-                  setState(() {
-                    _searchQuery = value.trim().toLowerCase();
-                  });
+                  setState(() => _searchQuery = value.trim().toLowerCase());
                 },
                 decoration: const InputDecoration(
                   hintText: 'Search',
@@ -192,11 +184,13 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const StoriesSection(),
+          // FIX: Pass shared stream down to StoriesSection
+          StoriesSection(storiesStream: _storiesStream),
           const SizedBox(height: 8),
           Expanded(
+            // FIX: Use shared stories stream here too — no extra Firestore reads
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: StoryRepository().activeStoriesStream(),
+              stream: _storiesStream,
               builder: (context, activeStoriesSnapshot) {
                 final activeStories = activeStoriesSnapshot.data?.docs ?? [];
                 final storyMap =
@@ -225,12 +219,10 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                               child: CircularProgressIndicator(),
                             );
                           }
-
                           final docs =
                               userSnapshot.data!.docs.where((d) {
                                 if (d.id == self?.uid) return false;
                                 if (blockedUsers.contains(d.id)) return false;
-
                                 final data = d.data();
                                 final displayName =
                                     (data['displayName'] as String?)
@@ -260,10 +252,9 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                       ? displayName
                                       : 'User';
                               final photoUrl = data['photoUrl'] as String?;
-                              bool hasUnviewedStory = false;
                               final hasStory = storyMap.containsKey(doc.id);
                               final userStories = storyMap[doc.id] ?? [];
-
+                              bool hasUnviewedStory = false;
                               if (hasStory) {
                                 final uid =
                                     FirebaseAuth.instance.currentUser?.uid;
@@ -280,64 +271,15 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                 }
                               }
 
-                              return ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 4,
-                                ),
-                                leading: GestureDetector(
-                                  onTap:
-                                      hasStory
-                                          ? () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder:
-                                                    (_) => ViewStoryScreen(
-                                                      user: data,
-                                                      stories: userStories,
-                                                    ),
-                                              ),
-                                            );
-                                          }
-                                          : null,
-                                  child: Container(
-                                    padding:
-                                        hasStory
-                                            ? const EdgeInsets.all(2)
-                                            : EdgeInsets.zero,
-                                    decoration:
-                                        hasStory
-                                            ? BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color:
-                                                    hasUnviewedStory
-                                                        ? Colors.blueAccent
-                                                        : Colors.grey.shade400,
-                                                width: 2.5,
-                                              ),
-                                            )
-                                            : null,
-                                    child: _UserListAvatar(
-                                      photoUrl: photoUrl,
-                                      radius: 26,
-                                    ),
-                                  ),
-                                ),
-                                title: Text(
-                                  title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  data['email'] as String? ?? '',
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 14,
-                                  ),
-                                ),
+                              return _UserListTile(
+                                userId: doc.id,
+                                data: data,
+                                title: title,
+                                photoUrl: photoUrl,
+                                hasStory: hasStory,
+                                hasUnviewedStory: hasUnviewedStory,
+                                userStories: userStories,
+                                subtitle: data['email'] as String? ?? '',
                                 onTap: () {
                                   if (self == null) return;
                                   final chatId = repo.chatIdForParticipants(
@@ -387,116 +329,139 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                             final groups = groupSnapshot.data ?? [];
                             final directChats = directSnapshot.data ?? [];
 
-                            return ListView(
-                              children: [
-                                if (groups.isNotEmpty) ...[
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 16.0,
-                                      vertical: 8.0,
-                                    ),
-                                    child: Text(
-                                      'Your Groups',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ),
-                                  ...groups.map((g) {
-                                    final data = g.data();
-                                    final title =
-                                        data['groupName'] as String? ?? 'Group';
-                                    return ListTile(
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 4,
+                            // FIX: Batch-load all other user IDs at once
+                            // instead of a FutureBuilder per list item
+                            final otherUserIds =
+                                directChats
+                                    .map((chat) {
+                                      final participants = List<String>.from(
+                                        chat.data()['participants'] ?? [],
+                                      );
+                                      participants.remove(self?.uid);
+                                      return participants.isNotEmpty
+                                          ? participants.first
+                                          : null;
+                                    })
+                                    .where(
+                                      (id) =>
+                                          id != null &&
+                                          !blockedUsers.contains(id),
+                                    )
+                                    .cast<String>()
+                                    .toList();
+
+                            return FutureBuilder<
+                              Map<String, Map<String, dynamic>>
+                            >(
+                              future: repo.fetchUsersByIds(otherUserIds),
+                              builder: (context, usersSnapshot) {
+                                final usersMap = usersSnapshot.data ?? {};
+
+                                return ListView(
+                                  children: [
+                                    if (groups.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 16.0,
+                                          vertical: 8.0,
+                                        ),
+                                        child: Text(
+                                          'Your Groups',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey,
                                           ),
-                                      leading: const CircleAvatar(
-                                        radius: 28,
-                                        backgroundColor: Colors.blueAccent,
-                                        child: Icon(
-                                          Icons.group,
-                                          color: Colors.white,
                                         ),
                                       ),
-                                      title: Text(
-                                        title,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      subtitle: Text(
-                                        data['lastMessage'] as String? ??
-                                            'Tap to chat',
-                                        style: const TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      onTap: () {
-                                        Navigator.of(context).push(
-                                          MaterialPageRoute<void>(
-                                            builder:
-                                                (_) => ChatRoomScreen(
-                                                  chatId: g.id,
-                                                  otherUserId: '',
-                                                  title: title,
-                                                  otherUserPhotoUrl: null,
-                                                ),
+                                      ...groups.map((g) {
+                                        final data = g.data();
+                                        final title =
+                                            data['groupName'] as String? ??
+                                            'Group';
+                                        return ListTile(
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 16,
+                                                vertical: 4,
+                                              ),
+                                          leading: const CircleAvatar(
+                                            radius: 28,
+                                            backgroundColor: Colors.blueAccent,
+                                            child: Icon(
+                                              Icons.group,
+                                              color: Colors.white,
+                                            ),
                                           ),
+                                          title: Text(
+                                            title,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          subtitle: Text(
+                                            data['lastMessage'] as String? ??
+                                                'Tap to chat',
+                                            style: const TextStyle(
+                                              color: Colors.grey,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                          onTap: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute<void>(
+                                                builder:
+                                                    (_) => ChatRoomScreen(
+                                                      chatId: g.id,
+                                                      otherUserId: '',
+                                                      title: title,
+                                                      otherUserPhotoUrl: null,
+                                                    ),
+                                              ),
+                                            );
+                                          },
                                         );
-                                      },
-                                    );
-                                  }),
-                                ],
-                                if (directChats.isNotEmpty) ...[
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 16.0,
-                                      vertical: 8.0,
-                                    ),
-                                    child: Text(
-                                      'Direct Messages',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey,
+                                      }),
+                                    ],
+                                    if (directChats.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 16.0,
+                                          vertical: 8.0,
+                                        ),
+                                        child: Text(
+                                          'Direct Messages',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  ...directChats.map((chatDoc) {
-                                    final chatData = chatDoc.data();
-                                    final participants = List<String>.from(
-                                      chatData['participants'] ?? [],
-                                    );
-                                    participants.remove(self?.uid);
-                                    final otherUserId =
-                                        participants.isNotEmpty
-                                            ? participants.first
-                                            : '';
+                                      ...directChats.map((chatDoc) {
+                                        final chatData = chatDoc.data();
+                                        final participants = List<String>.from(
+                                          chatData['participants'] ?? [],
+                                        );
+                                        participants.remove(self?.uid);
+                                        final otherUserId =
+                                            participants.isNotEmpty
+                                                ? participants.first
+                                                : '';
 
-                                    if (otherUserId.isEmpty ||
-                                        blockedUsers.contains(otherUserId)) {
-                                      return const SizedBox.shrink();
-                                    }
-
-                                    return FutureBuilder<
-                                      DocumentSnapshot<Map<String, dynamic>>
-                                    >(
-                                      future:
-                                          FirebaseFirestore.instance
-                                              .collection('users')
-                                              .doc(otherUserId)
-                                              .get(),
-                                      builder: (context, userSnap) {
-                                        if (!userSnap.hasData ||
-                                            !userSnap.data!.exists) {
+                                        if (otherUserId.isEmpty ||
+                                            blockedUsers.contains(
+                                              otherUserId,
+                                            )) {
                                           return const SizedBox.shrink();
                                         }
 
-                                        final userData = userSnap.data!.data()!;
+                                        // FIX: Use pre-fetched user data
+                                        // — no more per-item FutureBuilder
+                                        final userData = usersMap[otherUserId];
+                                        if (userData == null) {
+                                          return const SizedBox.shrink();
+                                        }
+
                                         final displayName =
                                             (userData['displayName'] as String?)
                                                 ?.trim();
@@ -512,13 +477,12 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                                 as String? ??
                                             'Tap to chat';
 
-                                        bool hasUnviewedStory = false;
                                         final hasStory = storyMap.containsKey(
                                           otherUserId,
                                         );
                                         final userStories =
                                             storyMap[otherUserId] ?? [];
-
+                                        bool hasUnviewedStory = false;
                                         if (hasStory) {
                                           final uid =
                                               FirebaseAuth
@@ -538,75 +502,15 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                           }
                                         }
 
-                                        return ListTile(
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                horizontal: 16,
-                                                vertical: 4,
-                                              ),
-                                          leading: GestureDetector(
-                                            onTap:
-                                                hasStory
-                                                    ? () {
-                                                      Navigator.of(
-                                                        context,
-                                                      ).push(
-                                                        MaterialPageRoute(
-                                                          builder:
-                                                              (
-                                                                _,
-                                                              ) => ViewStoryScreen(
-                                                                user: userData,
-                                                                stories:
-                                                                    userStories,
-                                                              ),
-                                                        ),
-                                                      );
-                                                    }
-                                                    : null,
-                                            child: Container(
-                                              padding:
-                                                  hasStory
-                                                      ? const EdgeInsets.all(2)
-                                                      : EdgeInsets.zero,
-                                              decoration:
-                                                  hasStory
-                                                      ? BoxDecoration(
-                                                        shape: BoxShape.circle,
-                                                        border: Border.all(
-                                                          color:
-                                                              hasUnviewedStory
-                                                                  ? Colors
-                                                                      .blueAccent
-                                                                  : Colors
-                                                                      .grey
-                                                                      .shade400,
-                                                          width: 2.5,
-                                                        ),
-                                                      )
-                                                      : null,
-                                              child: _UserListAvatar(
-                                                photoUrl: photoUrl,
-                                                radius: 26,
-                                              ),
-                                            ),
-                                          ),
-                                          title: Text(
-                                            title,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          subtitle: Text(
-                                            lastMessage,
-                                            style: const TextStyle(
-                                              color: Colors.grey,
-                                              fontSize: 14,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
+                                        return _UserListTile(
+                                          userId: otherUserId,
+                                          data: userData,
+                                          title: title,
+                                          photoUrl: photoUrl,
+                                          hasStory: hasStory,
+                                          hasUnviewedStory: hasUnviewedStory,
+                                          userStories: userStories,
+                                          subtitle: lastMessage,
                                           onTap: () {
                                             if (self == null) return;
                                             Navigator.of(context).push(
@@ -623,21 +527,21 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                             );
                                           },
                                         );
-                                      },
-                                    );
-                                  }),
-                                ] else if (groups.isEmpty) ...[
-                                  const Center(
-                                    child: Padding(
-                                      padding: EdgeInsets.all(32.0),
-                                      child: Text(
-                                        'No chats yet.\nUse the search bar above to find people and start chatting!',
-                                        textAlign: TextAlign.center,
+                                      }),
+                                    ] else if (groups.isEmpty) ...[
+                                      const Center(
+                                        child: Padding(
+                                          padding: EdgeInsets.all(32.0),
+                                          child: Text(
+                                            'No chats yet.\nUse the search bar above to find people and start chatting!',
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                ],
-                              ],
+                                    ],
+                                  ],
+                                );
+                              },
                             );
                           },
                         );
@@ -650,6 +554,80 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// FIX: Extracted reusable tile widget to avoid code duplication
+class _UserListTile extends StatelessWidget {
+  const _UserListTile({
+    required this.userId,
+    required this.data,
+    required this.title,
+    required this.photoUrl,
+    required this.hasStory,
+    required this.hasUnviewedStory,
+    required this.userStories,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String userId;
+  final Map<String, dynamic> data;
+  final String title;
+  final String? photoUrl;
+  final bool hasStory;
+  final bool hasUnviewedStory;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> userStories;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: GestureDetector(
+        onTap:
+            hasStory
+                ? () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder:
+                          (_) =>
+                              ViewStoryScreen(user: data, stories: userStories),
+                    ),
+                  );
+                }
+                : null,
+        child: Container(
+          padding: hasStory ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          decoration:
+              hasStory
+                  ? BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color:
+                          hasUnviewedStory
+                              ? Colors.blueAccent
+                              : Colors.grey.shade400,
+                      width: 2.5,
+                    ),
+                  )
+                  : null,
+          child: _UserListAvatar(photoUrl: photoUrl, radius: 26),
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(color: Colors.grey, fontSize: 14),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: onTap,
     );
   }
 }
@@ -688,14 +666,17 @@ class _UserListAvatar extends StatelessWidget {
 }
 
 class StoriesSection extends StatelessWidget {
-  const StoriesSection({super.key});
+  const StoriesSection({super.key, required this.storiesStream});
+
+  // FIX: Accept shared stream instead of creating a new one
+  final Stream<QuerySnapshot<Map<String, dynamic>>> storiesStream;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 100,
       child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: StoryRepository().activeStoriesStream(),
+        stream: storiesStream,
         builder: (context, snapshot) {
           final stories = snapshot.data?.docs ?? [];
           final grouped =
@@ -709,9 +690,7 @@ class StoriesSection extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             itemCount: grouped.keys.length + 1,
             itemBuilder: (context, index) {
-              if (index == 0) {
-                return const AddStoryItem();
-              }
+              if (index == 0) return const AddStoryItem();
               final uid = grouped.keys.elementAt(index - 1);
               final userStories = grouped[uid]!;
               return StoryItemWidget(userId: uid, stories: userStories);
