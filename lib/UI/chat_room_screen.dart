@@ -5,9 +5,11 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart' as fp;
+import 'package:first_app/UI/add_group_members_screen.dart';
 import 'package:first_app/UI/chat_media_files_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:first_app/services/chat_repository.dart';
+import 'package:first_app/services/local_notification_service.dart';
 import 'package:first_app/services/notification_repository.dart';
 import 'package:first_app/widgets/mute_dialog.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +49,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   @override
   void initState() {
     super.initState();
+    // Suppress notifications while this chat is open
+    activeChatId = widget.chatId;
     _prepare();
   }
 
@@ -64,6 +68,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   @override
   void dispose() {
+    // Clear active chat so notifications resume for this chat
+    if (activeChatId == widget.chatId) activeChatId = null;
     _controller.dispose();
     _audioRecorder.dispose();
     super.dispose();
@@ -72,6 +78,40 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   void _showError(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Shows a confirmation dialog then removes the current user from the group.
+  Future<void> _leaveGroup() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Leave Group'),
+            content: const Text(
+              'Are you sure you want to leave this group? You will no longer receive messages from it.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Leave',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _repo.leaveGroupChat(widget.chatId);
+      if (mounted) Navigator.of(context).pop(); // go back to home
+    } catch (e) {
+      if (mounted) _showError('Failed to leave group: $e');
+    }
   }
 
   Future<void> _confirmAndDeleteMessage({
@@ -336,6 +376,101 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               );
             },
           ),
+          // ── Group chat menu (Leave / Mute) ───────────────────────────
+          if (widget.otherUserId.isEmpty)
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>?>(
+              stream: _notifRepo.settingsStream(),
+              builder: (context, notifSnapshot) {
+                final notifSettings = notifSnapshot.data?.data();
+                final isMuted = _notifRepo.isMuted(
+                  notifSettings,
+                  widget.chatId,
+                );
+                return PopupMenuButton<String>(
+                  onSelected: (value) async {
+                    if (value == 'mute') {
+                      await MuteDialog.show(
+                        context,
+                        chatId: widget.chatId,
+                        settings: notifSettings,
+                        repo: _notifRepo,
+                      );
+                    } else if (value == 'add_members') {
+                      // Fetch current participants before opening the screen
+                      final snap = await _repo
+                          .chatDocument(widget.chatId)
+                          .get();
+                      final participants = List<String>.from(
+                        snap.data()?['participants'] ?? [],
+                      );
+                      if (!mounted) return;
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder:
+                              (_) => AddGroupMembersScreen(
+                                chatId: widget.chatId,
+                                currentParticipantIds: participants,
+                              ),
+                        ),
+                      );
+                    } else if (value == 'leave') {
+                      await _leaveGroup();
+                    }
+                  },
+                  itemBuilder:
+                      (_) => [
+                        PopupMenuItem<String>(
+                          value: 'mute',
+                          child: Row(
+                            children: [
+                              Icon(
+                                isMuted
+                                    ? Icons.notifications_active_outlined
+                                    : Icons.notifications_off_outlined,
+                                color: Colors.blueAccent,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(isMuted ? 'Unmute' : 'Mute'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem<String>(
+                          value: 'add_members',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.person_add_outlined,
+                                color: Colors.blueAccent,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Text('Add Members'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem<String>(
+                          value: 'leave',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.exit_to_app,
+                                color: Colors.red,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Leave Group',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                );
+              },
+            ),
+          // ── Direct chat menu (Block / Mute) ──────────────────────────
           if (widget.otherUserId.isNotEmpty)
             StreamBuilder<DocumentSnapshot<Map<String, dynamic>>?>(
               stream: _repo.currentUserStream(),

@@ -78,10 +78,15 @@ class NotificationRepository {
   // ── Per-chat mute ──────────────────────────────────────────────────────────
 
   Future<void> muteChat(String chatId, MuteDuration duration) async {
+    final ref = _settingsRef;
+    if (ref == null) return;
     final expires = duration.expiresAt;
     final value = expires == null ? -1 : expires.millisecondsSinceEpoch;
-    await _update({'mutedChats.$chatId': value});
-    debugPrint('✅ muteChat: mutedChats.$chatId = $value');
+    // Write as a real nested map so reads via settings['mutedChats'][chatId] work.
+    await ref.set({
+      'mutedChats': {chatId: value},
+    }, SetOptions(merge: true));
+    debugPrint('✅ muteChat: mutedChats[$chatId] = $value');
   }
 
   Future<void> unmuteChat(String chatId) async {
@@ -98,14 +103,13 @@ class NotificationRepository {
     debugPrint('✅ unmuteChat done, remaining: $mutedChats');
   }
 
-  /// Firestore returns dot-notation fields as a nested map on read,
-  /// so settings['mutedChats'] is a Map<String, dynamic>.
+  /// Reads the muted value for [chatId] from the nested 'mutedChats' map.
   dynamic _getMutedValue(Map<String, dynamic> settings, String chatId) {
     final mutedChats = settings['mutedChats'];
     if (mutedChats is Map) {
       return mutedChats[chatId];
     }
-    return settings['mutedChats.$chatId'];
+    return null;
   }
 
   bool isMuted(Map<String, dynamic>? settings, String chatId) {

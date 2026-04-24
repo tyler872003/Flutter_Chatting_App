@@ -6,6 +6,7 @@ import 'package:first_app/UI/login_screen_view.dart';
 import 'package:first_app/firebase_options.dart';
 import 'package:first_app/services/auth_verification_prefs.dart';
 import 'package:first_app/services/chat_repository.dart';
+import 'package:first_app/services/local_notification_service.dart';
 import 'package:flutter/material.dart';
 
 Future<void> main() async {
@@ -18,7 +19,10 @@ Future<void> main() async {
     // Native auto-init can still race on some devices; any type may be thrown.
     if (!e.toString().contains('duplicate-app')) rethrow;
   }
-  
+
+  // Initialise the local notification plugin once at startup
+  await LocalNotificationService.instance.init();
+
   runApp(const MyApp());
 }
 
@@ -61,6 +65,9 @@ class _AuthGateState extends State<AuthGate> {
         }
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
+          // Start listening for notifications when user is logged in
+          LocalNotificationService.instance.init();
+
           // Email/password users stay on [EmailVerificationScreen] until verified.
           if (shouldShowEmailVerificationGate(user)) {
             return EmailVerificationScreen(
@@ -74,8 +81,12 @@ class _AuthGateState extends State<AuthGate> {
           }
           return const HomeChatsScreen();
         }
+
+        // Stop notifications on logout
+        LocalNotificationService.instance.stop();
         return const LoginScreen();
       },
     );
   }
 }
+

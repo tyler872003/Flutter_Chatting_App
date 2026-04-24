@@ -149,6 +149,10 @@ class ChatRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Returns a typed reference to a chat document.
+  DocumentReference<Map<String, dynamic>> chatDocument(String chatId) =>
+      _db.collection('chats').doc(chatId);
+
   Stream<QuerySnapshot<Map<String, dynamic>>> usersExceptSelf() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) {
@@ -278,6 +282,19 @@ class ChatRepository {
     return chatRef.id;
   }
 
+  /// Adds [newMemberIds] to an existing group chat.
+  /// Uses arrayUnion so duplicate IDs are automatically ignored.
+  Future<void> addMembersToGroup(
+    String chatId,
+    List<String> newMemberIds,
+  ) async {
+    if (newMemberIds.isEmpty) return;
+    await _db.collection('chats').doc(chatId).update({
+      'participants': FieldValue.arrayUnion(newMemberIds),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> groupChatsStream() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return Stream.value([]);
@@ -349,6 +366,37 @@ class ChatRepository {
     await _db.collection('users').doc(uid).set({
       'blockedUsers': FieldValue.arrayRemove([blockedUid]),
     }, SetOptions(merge: true));
+  }
+
+  /// Removes the current user from a group chat's participants list.
+  /// - If they are the last member, deletes the group document entirely.
+  /// - If they are the admin, transfers admin to the next remaining member.
+  Future<void> leaveGroupChat(String chatId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
+    final chatRef = _db.collection('chats').doc(chatId);
+    final snap = await chatRef.get();
+    if (!snap.exists) return;
+
+    final data = snap.data()!;
+    final participants = List<String>.from(data['participants'] ?? []);
+    participants.remove(uid);
+
+    if (participants.isEmpty) {
+      // Last member — delete the whole group
+      await chatRef.delete();
+    } else {
+      final update = <String, dynamic>{
+        'participants': participants,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      // Hand off admin to the next member if needed
+      if (data['admin'] == uid) {
+        update['admin'] = participants.first;
+      }
+      await chatRef.update(update);
+    }
   }
 
   /// Fetches multiple user documents in parallel by their UIDs.

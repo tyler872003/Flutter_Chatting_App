@@ -30,13 +30,15 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
   String _searchQuery = '';
 
   // FIX: Single shared stories stream — prevents double Firestore reads
+  final _storyRepo = StoryRepository();
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _storiesStream =
-      StoryRepository().activeStoriesStream().asBroadcastStream();
+      _storyRepo.activeStoriesStream().asBroadcastStream();
 
   final _notifRepo = NotificationRepository();
 
   @override
   void dispose() {
+    _storyRepo.stopPeriodicCleanup();
     _searchController.dispose();
     super.dispose();
   }
@@ -47,8 +49,8 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
     _currentPhotoUrl = FirebaseAuth.instance.currentUser?.photoURL;
     _fetchCurrentPhotoUrl();
     ChatRepository().syncCurrentUserProfileDocument();
-    // FIX: Clean up expired stories on start
-    StoryRepository().deleteExpiredStories();
+    // Start periodic cleanup — runs immediately then every 30 min
+    _storyRepo.startPeriodicCleanup();
   }
 
   Future<void> _fetchCurrentPhotoUrl() async {
@@ -818,14 +820,37 @@ class _AddStoryItemState extends State<AddStoryItem> {
     final image = await picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 50,
+      maxWidth: 720,
+      maxHeight: 1280,
     );
     if (image == null) return;
 
     setState(() => _isUploading = true);
     try {
       final bytes = await image.readAsBytes();
+
+      // Firestore document limit is ~1 MB; base64 adds ~33% overhead.
+      // Keep the encoded string under 700 KB to stay safe.
       final base64Data = base64Encode(bytes);
+      if (base64Data.length > 700 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Image is too large. Please pick a smaller photo.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
       await StoryRepository().postStory(base64Data);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Story posted! It will expire in 24 hours.')),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -906,6 +931,43 @@ class StoryItemWidget extends StatelessWidget {
     required this.stories,
   });
 
+  Future<void> _confirmDelete(
+    BuildContext context,
+    String storyId,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Story'),
+            content: const Text(
+              'Are you sure you want to delete this story?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
+    if (confirm == true) {
+      await StoryRepository().deleteMyStory(storyId);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Story deleted.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<DocumentSnapshot>(
@@ -943,6 +1005,78 @@ class StoryItemWidget extends StatelessWidget {
               ),
             );
           },
+          // Long-press on YOUR OWN story shows delete option
+          onLongPress:
+              isMe
+                  ? () => showModalBottomSheet<void>(
+                    context: context,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(20),
+                      ),
+                    ),
+                    builder:
+                        (ctx) => SafeArea(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 4,
+                                margin: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade300,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 4,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.auto_stories,
+                                      color: Colors.blueAccent,
+                                    ),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'Your Story',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Divider(height: 24),
+                              // Delete each story in the list
+                              ...stories.map(
+                                (s) => ListTile(
+                                  leading: const Icon(
+                                    Icons.delete_outline,
+                                    color: Colors.red,
+                                  ),
+                                  title: const Text(
+                                    'Delete this story',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    _confirmDelete(context, s.id);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ),
+                        ),
+                  )
+                  : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
             child: Column(
