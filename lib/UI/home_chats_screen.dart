@@ -251,8 +251,9 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                               final docs =
                                   userSnapshot.data!.docs.where((d) {
                                     if (d.id == self?.uid) return false;
-                                    if (blockedUsers.contains(d.id))
+                                    if (blockedUsers.contains(d.id)) {
                                       return false;
+                                    }
                                     final data = d.data();
                                     final displayName =
                                         (data['displayName'] as String?)

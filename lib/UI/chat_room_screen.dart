@@ -404,7 +404,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                         snap.data()?['participants'] ?? [],
                       );
                       if (!mounted) return;
-                      Navigator.of(context).push(
+                      // ignore: use_build_context_synchronously
+                      final nav = Navigator.of(context);
+                      nav.push(
                         MaterialPageRoute<void>(
                           builder:
                               (_) => AddGroupMembersScreen(
