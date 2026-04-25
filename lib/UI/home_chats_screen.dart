@@ -7,6 +7,7 @@ import 'package:first_app/UI/blocked_users_screen.dart';
 import 'package:first_app/UI/chat_room_screen.dart';
 import 'package:first_app/UI/create_group_screen.dart';
 import 'package:first_app/UI/notification_settings_screen.dart';
+import 'package:first_app/UI/profile_settings_screen.dart';
 import 'package:first_app/UI/view_story_screen.dart';
 import 'package:first_app/services/auth_verification_prefs.dart';
 import 'package:first_app/services/chat_repository.dart';
@@ -24,12 +25,11 @@ class HomeChatsScreen extends StatefulWidget {
 }
 
 class _HomeChatsScreenState extends State<HomeChatsScreen> {
-  bool _isUploadingProfilePhoto = false;
   String? _currentPhotoUrl;
   final _searchController = TextEditingController();
   String _searchQuery = '';
 
-  // FIX: Single shared stories stream — prevents double Firestore reads
+  // Single shared stories stream — prevents double Firestore reads
   final _storyRepo = StoryRepository();
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _storiesStream =
       _storyRepo.activeStoriesStream().asBroadcastStream();
@@ -66,39 +66,12 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
     }
   }
 
-  Future<void> _pickAndUploadProfilePhoto() async {
-    final picker = ImagePicker();
-    final image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 200,
-      maxHeight: 200,
-      imageQuality: 50,
+  Future<void> _openProfileSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProfileSettingsScreen()),
     );
-    if (image == null) return;
-
-    final bytes = await image.readAsBytes();
-    if (bytes.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed: Selected image is empty.')),
-        );
-      }
-      return;
-    }
-
-    setState(() => _isUploadingProfilePhoto = true);
-    try {
-      final newUrl = await ChatRepository().updateProfilePhoto(bytes);
-      if (mounted) setState(() => _currentPhotoUrl = newUrl);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to update photo: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isUploadingProfilePhoto = false);
-    }
+    // Refresh photo in case user changed it
+    _fetchCurrentPhotoUrl();
   }
 
   @override
@@ -107,7 +80,6 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
     final self = repo.currentUser;
 
     return Scaffold(
-      backgroundColor: Colors.white,
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.of(
@@ -118,12 +90,10 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
         child: const Icon(Icons.group_add, color: Colors.white),
       ),
       appBar: AppBar(
-        backgroundColor: Colors.white,
         elevation: 0,
         title: const Text(
           'Chats',
           style: TextStyle(
-            color: Colors.black,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
@@ -131,21 +101,18 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
         leading: Padding(
           padding: const EdgeInsets.all(8.0),
           child: GestureDetector(
-            onTap: _pickAndUploadProfilePhoto,
-            child: Stack(
-              children: [
-                _UserListAvatar(photoUrl: _currentPhotoUrl, radius: 20),
-                if (_isUploadingProfilePhoto)
-                  const Positioned.fill(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
+            onTap: _openProfileSettings,
+            child: _UserListAvatar(photoUrl: _currentPhotoUrl, radius: 20),
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_outlined, color: Colors.black),
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'Profile Settings',
+            onPressed: _openProfileSettings,
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
             tooltip: 'Notification Settings',
             onPressed: () {
               Navigator.of(context).push(
@@ -156,7 +123,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.shield, color: Colors.black),
+            icon: const Icon(Icons.shield),
             tooltip: 'Blocked Users',
             onPressed: () {
               Navigator.of(context).push(
@@ -165,7 +132,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.logout, color: Colors.black),
+            icon: const Icon(Icons.logout),
             tooltip: 'Sign out',
             onPressed: () async {
               EmailRegistrationSession.clearPendingProfilePhoto();
@@ -185,7 +152,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               decoration: BoxDecoration(
-                color: Colors.grey.shade200,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(24),
               ),
               child: TextField(
@@ -196,7 +163,7 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                 decoration: const InputDecoration(
                   hintText: 'Search',
                   border: InputBorder.none,
-                  icon: Icon(Icons.search, color: Colors.grey),
+                  icon: Icon(Icons.search),
                 ),
               ),
             ),
@@ -416,7 +383,6 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                               'Your Groups',
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                color: Colors.grey,
                                               ),
                                             ),
                                           ),
@@ -451,8 +417,8 @@ class _HomeChatsScreenState extends State<HomeChatsScreen> {
                                                 data['lastMessage']
                                                         as String? ??
                                                     'Tap to chat',
-                                                style: const TextStyle(
-                                                  color: Colors.grey,
+                                                style: TextStyle(
+                                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                   fontSize: 14,
                                                 ),
                                               ),
@@ -713,7 +679,10 @@ class _UserListTile extends StatelessWidget {
         children: [
           Text(
             subtitle,
-            style: const TextStyle(color: Colors.grey, fontSize: 14),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 14,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -759,11 +728,15 @@ class _UserListAvatar extends StatelessWidget {
 
     return CircleAvatar(
       radius: radius,
-      backgroundColor: Colors.grey.shade300,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       backgroundImage: imageProvider,
       child:
           imageProvider == null
-              ? Icon(Icons.person, color: Colors.white, size: radius)
+              ? Icon(
+                  Icons.person,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  size: radius,
+                )
               : null,
     );
   }

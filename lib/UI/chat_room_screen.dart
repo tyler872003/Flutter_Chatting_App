@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart' as fp;
 import 'package:first_app/UI/add_group_members_screen.dart';
 import 'package:first_app/UI/chat_media_files_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:first_app/services/app_theme_service.dart';
 import 'package:first_app/services/chat_repository.dart';
 import 'package:first_app/services/local_notification_service.dart';
 import 'package:first_app/services/notification_repository.dart';
@@ -51,7 +52,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     super.initState();
     // Suppress notifications while this chat is open
     activeChatId = widget.chatId;
+    // Rebuild immediately when the user changes the app theme color
+    AppThemeService.instance.addListener(_onThemeChanged);
     _prepare();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _prepare() async {
@@ -70,6 +77,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   void dispose() {
     // Clear active chat so notifications resume for this chat
     if (activeChatId == widget.chatId) activeChatId = null;
+    AppThemeService.instance.removeListener(_onThemeChanged);
     _controller.dispose();
     _audioRecorder.dispose();
     super.dispose();
@@ -288,19 +296,20 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       return _AudioBubble(base64Data: base64Data, isMine: mine);
     } else if (type == 'file' && base64Data != null) {
       final fileName = data['fileName'] as String? ?? 'Document';
+      final cs = Theme.of(context).colorScheme;
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             Icons.insert_drive_file,
-            color: mine ? Colors.white : Colors.blue,
+            color: mine ? cs.onPrimary : cs.primary,
           ),
           const SizedBox(width: 8),
           Flexible(
             child: Text(
               fileName,
               style: TextStyle(
-                color: mine ? Colors.white : Colors.black,
+                color: mine ? cs.onPrimary : cs.onSurface,
                 decoration: TextDecoration.underline,
               ),
               overflow: TextOverflow.ellipsis,
@@ -311,9 +320,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
 
     // Default text
+    final cs = Theme.of(context).colorScheme;
     return Text(
       text,
-      style: TextStyle(color: mine ? Colors.white : Colors.black, fontSize: 16),
+      style: TextStyle(
+        color: mine ? cs.onPrimary : cs.onSurface,
+        fontSize: 16,
+      ),
     );
   }
 
@@ -322,20 +335,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     final imageProvider = _getImageProvider(widget.otherUserPhotoUrl);
 
     return Scaffold(
-      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.white,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.blue),
         title: Row(
           children: [
             CircleAvatar(
               radius: 16,
-              backgroundColor: Colors.grey.shade300,
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
               backgroundImage: imageProvider,
               child:
                   imageProvider == null
-                      ? const Icon(Icons.person, color: Colors.white, size: 20)
+                      ? Icon(
+                          Icons.person,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant,
+                          size: 20,
+                        )
                       : null,
             ),
             const SizedBox(width: 10),
@@ -346,14 +363,16 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   Text(
                     widget.title,
                     style: const TextStyle(
-                      color: Colors.black,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const Text(
+                  Text(
                     'Active now',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -638,16 +657,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                           ),
                                           child: CircleAvatar(
                                             radius: 14,
-                                            backgroundColor:
-                                                Colors.grey.shade300,
+                                            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                                             backgroundImage: imageProvider,
                                             child:
                                                 imageProvider == null
-                                                    ? const Icon(
-                                                      Icons.person,
-                                                      color: Colors.white,
-                                                      size: 16,
-                                                    )
+                                                    ? Icon(
+                                                        Icons.person,
+                                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                        size: 16,
+                                                      )
                                                     : null,
                                           ),
                                         ),
@@ -669,8 +687,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                             decoration: BoxDecoration(
                                               color:
                                                   mine
-                                                      ? Colors.blue
-                                                      : Colors.grey.shade200,
+                                                      ? Theme.of(context).colorScheme.primary
+                                                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                                               borderRadius: BorderRadius.only(
                                                 topLeft: const Radius.circular(
                                                   18,
@@ -733,7 +751,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       ),
                     )
                     : Container(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.surface,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 8,
@@ -768,7 +786,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                           Expanded(
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
+                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                                 borderRadius: BorderRadius.circular(24),
                               ),
                               child: TextField(
@@ -851,7 +869,9 @@ class _AudioBubbleState extends State<_AudioBubble> {
         IconButton(
           icon: Icon(
             _isPlaying ? Icons.pause : Icons.play_arrow,
-            color: widget.isMine ? Colors.white : Colors.black,
+            color: widget.isMine
+                ? Theme.of(context).colorScheme.onPrimary
+                : Theme.of(context).colorScheme.onSurface,
           ),
           onPressed: () {
             if (_isPlaying) {
@@ -873,9 +893,12 @@ class _AudioBubbleState extends State<_AudioBubble> {
             onChanged: (val) {
               _player.seek(Duration(milliseconds: val.toInt()));
             },
-            activeColor: widget.isMine ? Colors.white : Colors.blue,
-            inactiveColor:
-                widget.isMine ? Colors.white54 : Colors.grey.shade400,
+            activeColor: widget.isMine
+                ? Theme.of(context).colorScheme.onPrimary
+                : Theme.of(context).colorScheme.primary,
+            inactiveColor: widget.isMine
+                ? Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.4)
+                : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
       ],

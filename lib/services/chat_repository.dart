@@ -139,6 +139,72 @@ class ChatRepository {
     return photoUrl;
   }
 
+  /// Removes the current user's profile photo from Auth and Firestore.
+  Future<void> deleteProfilePhoto() async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('Not logged in');
+    try {
+      await user.updatePhotoURL(null);
+    } catch (_) {}
+    await _db.collection('users').doc(user.uid).update({
+      'photoUrl': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Changes the current user's display name + nickname atomically.
+  /// Releases the old nickname key and claims the new one in one transaction.
+  /// Throws [NicknameTakenException] if the new nickname is already taken.
+  Future<void> changeNickname(String newNickname) async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('Not logged in');
+
+    final display = newNickname.trim();
+    final newKey = nicknameDocKey(display);
+    final newRef = _db.collection('nicknames').doc(newKey);
+
+    // Find current nickname key to release
+    final oldKey = user.displayName != null
+        ? nicknameDocKey(user.displayName!)
+        : null;
+    final oldRef =
+        oldKey != null ? _db.collection('nicknames').doc(oldKey) : null;
+
+    var taken = false;
+    await _db.runTransaction((txn) async {
+      final newSnap = await txn.get(newRef);
+      if (newSnap.exists) {
+        final existing = newSnap.data()?['uid'] as String?;
+        if (existing != null && existing != user.uid) {
+          taken = true;
+          return;
+        }
+      }
+      // Release old key (if different)
+      if (oldRef != null && oldKey != newKey) {
+        final oldSnap = await txn.get(oldRef);
+        if (oldSnap.exists && oldSnap.data()?['uid'] == user.uid) {
+          txn.delete(oldRef);
+        }
+      }
+      // Claim new key
+      txn.set(newRef, {
+        'uid': user.uid,
+        'displayName': display,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    if (taken) throw NicknameTakenException();
+
+    // Update Auth display name + Firestore user doc
+    await user.updateDisplayName(display);
+    await _db.collection('users').doc(user.uid).update({
+      'displayName': display,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Future<void> ensureChatDocument({
     required String chatId,
     required List<String> participants,

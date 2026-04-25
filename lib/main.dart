@@ -4,6 +4,7 @@ import 'package:first_app/UI/email_verification_screen.dart';
 import 'package:first_app/UI/home_chats_screen.dart';
 import 'package:first_app/UI/login_screen_view.dart';
 import 'package:first_app/firebase_options.dart';
+import 'package:first_app/services/app_theme_service.dart';
 import 'package:first_app/services/auth_verification_prefs.dart';
 import 'package:first_app/services/chat_repository.dart';
 import 'package:first_app/services/local_notification_service.dart';
@@ -23,6 +24,9 @@ Future<void> main() async {
   // Initialise the local notification plugin once at startup
   await LocalNotificationService.instance.init();
 
+  // Load persisted theme before showing any UI
+  await AppThemeService.instance.load();
+
   runApp(const MyApp());
 }
 
@@ -31,14 +35,15 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Chat',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
+    return ListenableBuilder(
+      listenable: AppThemeService.instance,
+      builder: (_, __) => MaterialApp(
+        title: 'Chat',
+        debugShowCheckedModeBanner: false,
+        theme: AppThemeService.instance.lightTheme,
+        darkTheme: AppThemeService.instance.darkTheme,
+        home: const AuthGate(),
       ),
-      home: const AuthGate(),
     );
   }
 }
