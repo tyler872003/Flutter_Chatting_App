@@ -45,6 +45,12 @@ service cloud.firestore {
         allow delete: if isParticipant(chatId) &&
           resource.data.senderId == request.auth.uid;
       }
+
+      // Call signaling documents (e.g. calls/active)
+      match /calls/{callId} {
+        allow read: if isParticipant(chatId);
+        allow create, update, delete: if isParticipant(chatId);
+      }
     }
 
     match /stories/{storyId} {

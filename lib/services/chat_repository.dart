@@ -243,6 +243,7 @@ class ChatRepository {
     String messageType = 'text',
     String? base64Data,
     String? fileName,
+    Map<String, dynamic>? extraData,
   }) async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -262,6 +263,9 @@ class ChatRepository {
     };
     if (base64Data != null) messageData['base64Data'] = base64Data;
     if (fileName != null) messageData['fileName'] = fileName;
+    if (extraData != null && extraData.isNotEmpty) {
+      messageData.addAll(extraData);
+    }
 
     batch.set(messageRef, messageData);
 
@@ -269,6 +273,13 @@ class ChatRepository {
     if (messageType == 'image') lastMsg = '📷 Image';
     if (messageType == 'audio') lastMsg = '🎤 Voice message';
     if (messageType == 'file') lastMsg = '📎 File';
+    if (messageType == 'call_started') {
+      lastMsg = trimmed == 'video' ? '📹 Video call' : '📞 Voice call';
+    }
+    if (messageType == 'call_ended') {
+      lastMsg = trimmed == 'video' ? '📹 Video call ended' : '📞 Voice call ended';
+    }
+    if (messageType == 'call_event') lastMsg = trimmed;
 
     batch.set(chatRef, {
       'lastMessage': lastMsg,
@@ -283,6 +294,13 @@ class ChatRepository {
     if (type == 'image') return '📷 Image';
     if (type == 'audio') return '🎤 Voice message';
     if (type == 'file') return '📎 File';
+    if (type == 'call_started') {
+      return text == 'video' ? '📹 Video call' : '📞 Voice call';
+    }
+    if (type == 'call_ended') {
+      return text == 'video' ? '📹 Video call ended' : '📞 Voice call ended';
+    }
+    if (type == 'call_event') return text.isEmpty ? 'Call update' : text;
     return text.isEmpty ? 'Message' : text;
   }
 

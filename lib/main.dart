@@ -8,6 +8,7 @@ import 'package:first_app/services/app_theme_service.dart';
 import 'package:first_app/services/auth_verification_prefs.dart';
 import 'package:first_app/services/chat_repository.dart';
 import 'package:first_app/services/local_notification_service.dart';
+import 'package:first_app/widgets/incoming_call_listener.dart';
 import 'package:flutter/material.dart';
 
 Future<void> main() async {
@@ -84,7 +85,7 @@ class _AuthGateState extends State<AuthGate> {
               },
             );
           }
-          return const HomeChatsScreen();
+          return const IncomingCallListener(child: HomeChatsScreen());
         }
 
         // Stop notifications on logout
